@@ -79,20 +79,19 @@ class PegasosSolver(SvmSolver):
                     lambda_final, 
                     y
                 )
-        if (error < 1).any():
-            for i, selected_value in enumerate(selected_values):
-                if (error[i] < 1):
-                    self.sv_index = self.sv_map[selected_value] or self.current_size
-                    if self.sv_index == len(self.support_weights):
-                        # CASE: need to resize
-                        self.support_weights.resize(self.support_weights.shape[0] + self.resize_step)
-                        self.support_targets.resize(self.support_targets.shape[0] + self.resize_step)
-                        self.support_vectors.resize((self.support_vectors.shape[0] + self.resize_step, self.support_vectors.shape[1]))
-                    if self.sv_index == self.current_size:
-                        # CASE: add new stuff
-                        self.sv_map[selected_value] = self.current_size
-                        self.alpha_indices.append(selected_value)
-                        self.support_vectors[self.sv_index] = X[i]
-                        self.support_targets[self.sv_index] = y[i]
-                        self.current_size += 1
-                    self.support_weights[self.sv_index] += 1
+        error_values = selected_values[error < 1]
+        for selected_value in error_values:
+            self.sv_index = self.sv_map[selected_value] or self.current_size
+            if self.sv_index == len(self.support_weights):
+                # CASE: need to resize
+                self.support_weights.resize(self.support_weights.shape[0] + self.resize_step)
+                self.support_targets.resize(self.support_targets.shape[0] + self.resize_step)
+                self.support_vectors.resize((self.support_vectors.shape[0] + self.resize_step, self.support_vectors.shape[1]))
+            if self.sv_index == self.current_size:
+                # CASE: add new stuff
+                self.sv_map[selected_value] = self.current_size
+                self.alpha_indices.append(selected_value)
+                self.support_vectors[self.sv_index] = X[selected_value-selected_values[0]]
+                self.support_targets[self.sv_index] = y[selected_value-selected_values[0]]
+                self.current_size += 1
+            self.support_weights[self.sv_index] += 1
