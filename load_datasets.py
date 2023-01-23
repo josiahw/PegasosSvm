@@ -5,7 +5,7 @@ def unpickle(file):
         dict = pickle.load(fo, encoding='bytes')
     return dict
 
-def load_mnist(train=12500,test=7500):
+def load_mnist(train=52500,test=7500):
         # Load data from https://www.openml.org/d/554
         X, y = sklearn.datasets.fetch_openml('mnist_784', version=1, return_X_y=True, as_frame=False, parser='liac-arff')
 
