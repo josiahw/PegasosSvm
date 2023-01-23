@@ -79,9 +79,10 @@ class PegasosSolver(SvmSolver):
                     lambda_final, 
                     y
                 )
-        error_values = selected_values[error < 1]
-        for selected_value in error_values:
-            self.sv_index = self.sv_map[selected_value] or self.current_size
+        # stackoverflow tells me this is marginally faster than argwhere for 1d arrays
+        error_values = numpy.unravel_index(numpy.flatnonzero(error < 1),error.shape)[0]
+        for selected_index in error_values:
+            self.sv_index = self.sv_map[selected_values[selected_index]] or self.current_size
             if self.sv_index == len(self.support_weights):
                 # CASE: need to resize
                 self.support_weights.resize(self.support_weights.shape[0] + self.resize_step)
@@ -89,9 +90,9 @@ class PegasosSolver(SvmSolver):
                 self.support_vectors.resize((self.support_vectors.shape[0] + self.resize_step, self.support_vectors.shape[1]))
             if self.sv_index == self.current_size:
                 # CASE: add new stuff
-                self.sv_map[selected_value] = self.current_size
-                self.alpha_indices.append(selected_value)
-                self.support_vectors[self.sv_index] = X[selected_value-selected_values[0]]
-                self.support_targets[self.sv_index] = y[selected_value-selected_values[0]]
+                self.sv_map[selected_values[selected_index]] = self.current_size
+                self.alpha_indices.append(selected_values[selected_index])
+                self.support_vectors[self.sv_index] = X[selected_index]
+                self.support_targets[self.sv_index] = y[selected_index]
                 self.current_size += 1
             self.support_weights[self.sv_index] += 1
