@@ -43,25 +43,6 @@ class rbf_kernel:
         Z = numpy.sum(numpy.square(numpy.subtract(X, Y)), axis=1)
         return numpy.exp(-self.gamma * Z)
 
-@torch.jit.script
-def rbf_kernel_torch(X: torch.Tensor, gamma: torch.Tensor, support_vectors: torch.Tensor, alphas: torch.Tensor):
-    return 2 * alphas @ torch.exp(-gamma * ((X - support_vectors)**2).sum(1).squeeze()) - 1
-
-class rbf_model(torch.nn.Module):
-    """
-    A torch impl of the rbf_kernel model - for use in backprop
-    """
-    # define model elements
-    def __init__(self, support_vectors, alphas, gamma):
-        super(rbf_model, self).__init__()
-        self.gamma = torch.tensor(gamma, requires_grad=False)
-        self.support_vectors = torch.nn.Parameter(torch.tensor(support_vectors, requires_grad=True), requires_grad=True)
-        self.alphas = torch.tensor(alphas, requires_grad=False)
-
-    # forward propagate input
-    def forward(self, X: torch.Tensor):
-        return torch.clip(rbf_kernel_torch(X, self.gamma, self.support_vectors, self.alphas),-1,1)
-
 class SvcPredictor:
     """
     A base single class (1/-1) SVC predictor. Not intended to be exposed to users.
@@ -87,7 +68,7 @@ class SvcPredictor:
         self.kernel = kernel
         self.dtype = dtype
 
-    def fit(self, X: numpy.typing.ArrayLike, y: numpy.typing.ArrayLike, back_fit = False):
+    def fit(self, X: numpy.typing.ArrayLike, y: numpy.typing.ArrayLike):
         """
         Fit to data X with labels y.
         """
@@ -100,36 +81,6 @@ class SvcPredictor:
         self.a = alphas
         self.sv = sv
         self.indices = sv_indices
-
-        if back_fit:
-            self.back_fit(X,y)
-
-    def back_fit(self, X: numpy.typing.ArrayLike, y: numpy.typing.ArrayLike):
-        """
-        TODO: implement predict_proba with torch types and hold all else constant while doing grad descent on support vectors
-        """
-        model= rbf_model(self.sv, self.a, self.kernel.gamma)
-        criterion = torch.nn.MSELoss()
-        optimizer = torch.optim.AdamW(model.parameters(), 0.05)
-        batch_size = 1024
-        counter = 0
-        X = torch.tensor(X, requires_grad=False)
-        # XXX: this is RBF kernel only - TODO: define a set of acceptable kernels with their torch funcs
-        for i in range(5):
-            l = 0
-            t0 = time.time()
-            for t, x in enumerate(X):
-                result = model.forward(x)
-                loss = (result - y[t])**2
-                l += loss.item()
-                loss.backward()
-                if counter % batch_size == batch_size-1:
-                    optimizer.step()
-                counter += 1
-            if self.verbose:
-                print(f"Epoch in {time.time()-t0:.2f}s - Error: {l/len(X)}")
-        
-        self.sv = model.support_vectors.detach().numpy()
 
     def _predict_raw(self, X: numpy.typing.ArrayLike):
         """
@@ -168,11 +119,11 @@ class PegasosSVC:
         self.kernel = kernel
         self.dtype = dtype
 
-    def fit(self, X, y, back_fit = False):
+    def fit(self, X, y):
         self.classes = numpy.unique(y)
         sv_indices = set()
         t0 = time.time()
-        data_func = lambda x: x[0].fit(X, x[1], back_fit=back_fit)
+        data_func = lambda x: x[0].fit(X, x[1])
         data = [(SvcPredictor(self.C, self.dtype, self.kernel), (y == c)*2. - 1.) for c in self.classes]
         #turns out threading is slower. Probably due to cache
         #threadDispatcher = MultiThreadedExecutor()
@@ -194,14 +145,6 @@ class PegasosSVC:
             sv_indices = list(sv_indices)
             sv_indices.sort()
             self.sv = X[sv_indices].copy()
-
-            if back_fit:
-                for out_index,orig_index in enumerate(sv_indices):
-                    fitted_svs = []
-                    for model, labels in data:
-                        if orig_index in model.indices:
-                            fitted_svs.append(model.sv[model.indices.index(orig_index)])
-                    self.sv[out_index] = sum(fitted_svs)/len(fitted_svs)
 
             # create a 2D shared weight matrix to calculate all class proba's at once
             self.a = numpy.zeros((len(data),len(sv_indices)), dtype=self.dtype)
@@ -244,23 +187,6 @@ class PegasosSVC:
 
 if __name__ == '__main__':
     from test_datasets import test_mnist, test_cifar10
-    #import matplotlib
-    #data,labels = load_moons(10000)
-    """
-    #parameters can be sensitive, these ones work for two moons
-    C = 0.025
-    clss = MultiClassSVM(C,numpy.float32,rbf_kernel,gamma=13)
-    t0 = time.time()
-    clss.fit(data, labels)
-    print(f"fit in {time.time()-t0:.2f} seconds")
-
-    #check assigned classes for the two moons as a classification error
-    t0 = time.time()
-    t = clss.predict(data)
-    print(f"predicted in {time.time()-t0:.2f} seconds")
-    print ("Error", numpy.sum((labels-t)**2) / float(len(data)))
-    
-    """
     print("Testing MNIST - SVC")
     error = test_mnist()
     print ("Error", error)
