@@ -2,7 +2,8 @@
 import numpy, time, numpy.typing, random
 from collections import defaultdict
 
-
+def defaultData():
+    return None
 
 class SvmSolver:
     dtype = numpy.float32
@@ -36,9 +37,10 @@ class PegasosSolver(SvmSolver):
         self.T = int(1. / self.gamma / self.C)
 
         # TODO: should these be inited below?
-        self.sv_map = defaultdict(lambda: None)
+        self.sv_map = defaultdict(defaultData)
         self.alpha_indices = []
         self.current_size = 0
+        self.t = 0
 
     @staticmethod
     def _Error(kernel_result: numpy.typing.ArrayLike, support_weights: numpy.typing.ArrayLike, gamma: float, target: numpy.typing.ArrayLike):
@@ -46,19 +48,18 @@ class PegasosSolver(SvmSolver):
 
     def Solve(self, X: numpy.typing.ArrayLike, y: numpy.typing.ArrayLike, stride: int = 10):
         t0 = time.time()
-        t = 0
-        while t < self.T:
-            start_index = t % len(X)
+        self.t = 0
+        while self.t < self.T:
+            start_index = self.t % len(X)
             end_index = min(len(X), start_index + stride)
-            self.SolveIncremental(t, numpy.arange(start_index,end_index), X[start_index:end_index], y[start_index:end_index])
-            t += end_index - start_index
+            self.SolveIncremental(numpy.arange(start_index,end_index), X[start_index:end_index], y[start_index:end_index])
+            self.t += end_index - start_index
         if self.verbose:
             print(f"Solve {self.current_size} SVs in {time.time()-t0:.2f}s")
             t0 = time.time()
-        self.t = t
         return self.support_vectors[:self.current_size].copy(), y[self.alpha_indices] * self.support_weights[:self.current_size], self.alpha_indices
 
-    def SolveIncremental(self, t: int, selected_values: numpy.typing.ArrayLike, X: numpy.typing.ArrayLike, y: numpy.typing.ArrayLike):
+    def SolveIncremental(self, selected_values: numpy.typing.ArrayLike, X: numpy.typing.ArrayLike, y: numpy.typing.ArrayLike):
         """
         Pegasos algorithm - inner loop iteration
         """
@@ -72,7 +73,7 @@ class PegasosSolver(SvmSolver):
             self.current_size = 1
 
         k = self.support_targets[:self.current_size] * self.kernel(X, self.support_vectors[:self.current_size])
-        lambda_final = self.gamma * (t + len(y)/2)
+        lambda_final = self.gamma * (self.t + len(y)/2)
         error = self._Error(
                     k, 
                     self.support_weights[:self.current_size], 

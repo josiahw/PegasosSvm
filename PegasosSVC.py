@@ -8,8 +8,36 @@ import numpy, time, numpy.linalg, numpy.typing
 from sklearn.metrics.pairwise import chi2_kernel, polynomial_kernel
 from MultiThreadedExecutor import MultiThreadedExecutor
 from PegasosSolver import PegasosSolver
-import torch
+import numpy
 from scipy import sparse
+
+class jaccard_kernel:
+
+    def __init__(self):
+        pass
+
+    def __call__(self, X, Y):
+        """
+        Assumes X and Y are of shape (instances, dimensionality)
+        """
+        if X.shape[0] == 1 or Y.shape[0] == 1:
+            return self.InnerKernel(X, Y)
+        return self.OuterKernel(X, Y)
+    
+    def OuterKernel(self, X, Y):
+        """
+        Returns X * Y matrix of all combinations of distances
+        """
+        # TODO: handle zero padding
+        return (numpy.sum(X.reshape((1, X.shape[0], X.shape[1])) == Y.reshape((Y.shape[0], 1, Y.shape[1])), axis=-1) / X.shape[1]).squeeze().reshape((Y.shape[0],X.shape[0])).T
+    
+    def InnerKernel(self, X, Y):
+        """
+        Assumes X or Y is singular, or they are of the same length.
+        Returns a 1d array of paired distances
+        """
+        Z = X == Y
+        return Z / X.shape[1] 
 
 class rbf_kernel:
 
@@ -55,7 +83,9 @@ class SvcPredictor:
     def __init__(self,
                  C,
                  dtype = numpy.float32,
-                 kernel = rbf_kernel(0.0001)
+                 kernel = rbf_kernel(0.0001),
+                 dataset_size = None,
+                 dimensionality = None
                  ):
         """
         The parameters are:
@@ -67,15 +97,24 @@ class SvcPredictor:
         self.C = C
         self.kernel = kernel
         self.dtype = dtype
+        self.dimensionality = dimensionality
+        self.dataset_size = dataset_size
+        if not dataset_size is None:
+            self.solver = PegasosSolver(self.C, self.dtype, self.kernel, dataset_size, dimensionality)
+
+    def update(self, indices, X, y):
+        """
+        This assumes enough info has been given at the outset
+        """
+        self.solver.SolveIncremental(indices, X, y)
 
     def fit(self, X: numpy.typing.ArrayLike, y: numpy.typing.ArrayLike):
         """
         Fit to data X with labels y.
         """
         t0 = time.time()
-        solver = PegasosSolver(self.C, X.dtype, self.kernel, X.shape[0], X.shape[1])
-        sv, alphas, sv_indices = solver.Solve(X, y)
-        del solver
+        self.solver = PegasosSolver(self.C, X.dtype, self.kernel, X.shape[0], X.shape[1])
+        sv, alphas, sv_indices = self.solver.Solve(X, y)
         if self.verbose:
             print(f"Solved {len(alphas)} SVs in {time.time()-t0:.2f}")
         self.a = alphas
@@ -114,17 +153,43 @@ class PegasosSVC:
     def __init__(self,
                 C,
                 dtype = numpy.float32,
-                kernel = rbf_kernel(0.00001)): # TODO: fix kernel default
+                kernel = rbf_kernel(0.00001),
+                classes = None,
+                dataset_size = None,
+                dimensionality = None): # TODO: fix kernel default
         self.C = C
         self.kernel = kernel
         self.dtype = dtype
+        self.classes = classes
+        self.dimensionality = dimensionality
+        self.dataset_size = dataset_size
+        self.predictors = None
+        if not classes is None and not dataset_size is None:
+            self.predictors = [SvcPredictor(self.C, self.dtype, self.kernel, self.dataset_size, self.dimensionality) for c in classes]
+
+
+    def update(self, indices, X, y, threadDispatcher = None):
+        """
+        This assumes enough info has been given at the outset
+        """
+        data_func = lambda x: x[0].update(indices, X, x[1])
+        data = [(self.predictors[i], (y == c)*2. - 1.) for i, c in enumerate(self.classes)]
+        if threadDispatcher is None:
+            for d in data:
+                data_func(d)
+        else:
+            threadDispatcher.exec(data_func, data)
+
 
     def fit(self, X, y):
-        self.classes = numpy.unique(y)
+        if self.classes is None:
+            self.classes = numpy.unique(y)
         sv_indices = set()
         t0 = time.time()
         data_func = lambda x: x[0].fit(X, x[1])
-        data = [(SvcPredictor(self.C, self.dtype, self.kernel), (y == c)*2. - 1.) for c in self.classes]
+        if self.predictors is None:
+            self.predictors = [SvcPredictor(self.C, self.dtype, self.kernel, X.shape[0], X.shape[1]) for c in self.classes]
+        data = [(self.predictors[i], (y == c)*2. - 1.) for i, c in enumerate(self.classes)]
         #turns out threading is slower. Probably due to cache
         #threadDispatcher = MultiThreadedExecutor()
         #threadDispatcher.exec(data_func, data)
